@@ -84,7 +84,7 @@ python watermark.py
 ## 注意事项
 
 1. 确保字体文件存在且有正确的权限
-2. 高德地图 API 密钥需要自行申请 [https://console.amap.com/dev/key/app](高德地图开放平台控制台)
+2. 高德地图 API 密钥需要自行申请 [高德地图开放平台控制台](https://console.amap.com/dev/key/app)
 3. PNG 格式不支持保存 EXIF 信息
 4. 建议使用 Python 3.12
 
