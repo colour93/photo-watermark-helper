@@ -24,13 +24,13 @@ var/
 *.egg
 
 # 字体
-fonts/
+/fonts/
 
 # 输入目录
-input/
+/input/
 
 # 输出目录
-output/
+/output/
 
 # 虚拟环境
 venv/
