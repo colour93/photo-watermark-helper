@@ -1,4 +1,4 @@
-# Photo Watermark
+# Photo Watermark Helper
 
 一个用于给照片添加时间戳和地理位置水印的 Python 工具。
 
