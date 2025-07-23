@@ -103,3 +103,12 @@ output/
   ├── photo1.jpg  # 右下角添加时间戳和地理位置
   └── photo2.jpg  # 保持原始质量和 EXIF 信息
 ```
+
+## 样张
+
+| 原图 | 水印后 |
+|:---:|:---:|
+| ![原图1](docs/input/C93_0011.jpg) | ![水印1](docs/output/C93_0011.jpg) |
+| ![原图2](docs/input/C93_1088.jpg) | ![水印2](docs/output/C93_1088.jpg) |
+| ![原图3](docs/input/C93_2155.jpg) | ![水印3](docs/output/C93_2155.jpg) |
+
