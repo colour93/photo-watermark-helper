@@ -168,7 +168,15 @@ curl -X POST "http://localhost:9393/watermark/file" \
 
 #### WebSocket接口详解
 
-WebSocket接口提供了高效的实时图片处理能力，现在支持直接传输文件数据，避免了Base64编码的开销。它特别适合需要连续处理多张图片的场景。
+
+### 大文件分块上传说明
+
+由于 WebSocket 消息有大小限制（通常为 1MB），客户端会自动将大文件分块上传。无需手动操作，客户端会自动处理分块和重组，服务器也已支持分块接收。
+
+**注意事项：**
+- 单张图片超过 1MB 时会自动分块上传。
+- 分块上传无需用户干预，进度会在客户端界面显示。
+- 如果遇到 `message too big` 错误，请确保使用新版客户端和服务器。
 
 ##### 连接建立
 
@@ -182,11 +190,36 @@ WebSocket接口提供了高效的实时图片处理能力，现在支持直接�
    {
      "token": "your_secret_api_token_here",  // 如果配置了API_TOKEN则必需
      "filename": "image.jpg",                // 文件名
-     "size": 1024000                        // 文件大小（字节）
+     "size": 1024000,                       // 文件大小（字节）
+     "chunks": 3,                           // 分块数量（可选，大文件时使用）
+     "chunk_size": 1048576                  // 分块大小（可选，默认1MB）
    }
    ```
 
-3. 然后发送文件的二进制数据
+3. 然后发送文件的二进制数据（支持分块发送）：
+   ```javascript
+   // 小文件（< 1MB）直接发送
+   if (file.size <= 1048576) {
+     socket.send(fileData);
+   } else {
+     // 大文件分块发送
+     const chunkSize = 1048576 - 1024; // 1MB - 1KB buffer
+     const totalChunks = Math.ceil(file.size / chunkSize);
+     
+     for (let i = 0; i < totalChunks; i++) {
+       const start = i * chunkSize;
+       const end = Math.min(start + chunkSize, file.size);
+       const chunk = fileData.slice(start, end);
+       
+       socket.send(chunk);
+       
+       // 等待服务器确认（除最后一块外）
+       if (i < totalChunks - 1) {
+         await waitForChunkAck();
+       }
+     }
+   }
+   ```
 
 4. 服务器处理文件并返回JSON响应：
    ```json
@@ -221,6 +254,134 @@ python examples/websocket_file_client.py
 python examples/websocket_file_client.py /path/to/image.jpg
 ```
 
+##### JavaScript WebSocket分块上传示例
+
+```javascript
+async function uploadImageViaWebSocket(file, apiToken) {
+  const socket = new WebSocket('ws://localhost:9393/watermark/stream');
+  const CHUNK_SIZE = 1024 * 1024 - 1024; // 1MB - 1KB buffer
+  
+  return new Promise((resolve, reject) => {
+    socket.onopen = async () => {
+      try {
+        // 1. 发送文件信息
+        const totalChunks = file.size > CHUNK_SIZE ? 
+          Math.ceil(file.size / CHUNK_SIZE) : 1;
+        
+        const fileInfo = {
+          token: apiToken,
+          filename: file.name,
+          size: file.size,
+          chunks: totalChunks,
+          chunk_size: CHUNK_SIZE
+        };
+        
+        socket.send(JSON.stringify(fileInfo));
+        
+        // 2. 读取文件数据
+        const fileData = await file.arrayBuffer();
+        
+        // 3. 发送文件数据（分块或整体）
+        if (file.size <= CHUNK_SIZE) {
+          // 小文件，直接发送
+          socket.send(fileData);
+        } else {
+          // 大文件，分块发送
+          let chunkIndex = 0;
+          
+          const sendNextChunk = () => {
+            if (chunkIndex < totalChunks) {
+              const start = chunkIndex * CHUNK_SIZE;
+              const end = Math.min(start + CHUNK_SIZE, file.size);
+              const chunk = fileData.slice(start, end);
+              
+              socket.send(chunk);
+              chunkIndex++;
+            }
+          };
+          
+          // 开始发送第一块
+          sendNextChunk();
+          
+          // 监听服务器的块确认消息
+          socket.addEventListener('message', (event) => {
+            try {
+              const response = JSON.parse(event.data);
+              
+              // 如果是块确认消息，继续发送下一块
+              if (response.chunk_received && chunkIndex < totalChunks) {
+                sendNextChunk();
+              }
+            } catch (e) {
+              // 忽略非JSON消息（可能是最终的文件数据）
+            }
+          });
+        }
+      } catch (error) {
+        reject(error);
+      }
+    };
+    
+    let awaitingResult = false;
+    socket.onmessage = (event) => {
+      try {
+        // 尝试解析JSON响应
+        const response = JSON.parse(event.data);
+        
+        // 如果是块确认消息，已在上面处理
+        if (response.chunk_received) {
+          return;
+        }
+        
+        // 如果是处理结果
+        if (response.success !== undefined) {
+          if (response.success) {
+            awaitingResult = true;
+            console.log('图片处理成功，等待文件数据...');
+          } else {
+            reject(new Error(response.message || '处理失败'));
+          }
+        }
+      } catch (e) {
+        // 如果不是JSON，可能是文件二进制数据
+        if (awaitingResult && event.data instanceof ArrayBuffer) {
+          const blob = new Blob([event.data]);
+          resolve(blob);
+        }
+      }
+    };
+    
+    socket.onerror = (error) => reject(error);
+    socket.onclose = () => {
+      if (!awaitingResult) {
+        reject(new Error('连接意外关闭'));
+      }
+    };
+  });
+}
+
+// 使用示例
+const fileInput = document.getElementById('file-input');
+fileInput.addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (file) {
+    try {
+      const processedBlob = await uploadImageViaWebSocket(file, 'your_api_token');
+      
+      // 下载处理后的文件
+      const url = URL.createObjectURL(processedBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `watermarked_${file.name}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('上传失败:', error);
+    }
+  }
+});
+```
+
 ##### WebSocket优势
 
 1. **高效传输**: 直接传输文件二进制数据，无需Base64编码/解码
@@ -229,12 +390,14 @@ python examples/websocket_file_client.py /path/to/image.jpg
 4. **实时反馈**: 即时获取处理结果，适合交互式应用
 5. **双向通信**: 客户端和服务器可以随时交换信息
 6. **状态保持**: 连接期间可以维护会话状态
+7. **分块上传**: 自动处理大文件分块，突破消息大小限制
+8. **容错性**: 分块确认机制确保数据完整性
 
-注意：WebSocket现在处理原始文件数据，支持更大的文件和更好的性能。
+注意：WebSocket现在处理原始文件数据，支持更大的文件和更好的性能。分块上传功能让您可以处理任意大小的图片文件。
 
 ## 开发说明
 
-项目结构：
+ 项目结构：
 
 ```
 watermarker/
