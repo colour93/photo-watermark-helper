@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from typing import Iterable
 
 import piexif
 import requests
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat, JpegImagePlugin
+from PIL import Image, ImageCms, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat, JpegImagePlugin
 
 from ..utils.config import config
 
@@ -23,8 +24,16 @@ STYLE_PRESETS: dict[str, dict[str, object]] = {
     "glass": {"plate_alpha": 132, "blur_scale": 1.4, "radius": 0.8, "stroke": 1},
     "film": {"plate_alpha": 190, "blur_scale": 0.3, "radius": 0.0, "stroke": 0},
     "stamp": {"plate_alpha": 0, "blur_scale": 0.0, "radius": 0.0, "stroke": 2},
+    "retro": {"plate_alpha": 52, "blur_scale": 0.0, "radius": 0.15, "stroke": 0},
 }
 POSITIONS = ("auto", "top-left", "top-right", "bottom-left", "bottom-right")
+PRINT_PRESETS: dict[str, tuple[float, float]] = {
+    "3.5x5": (3.5, 5.0),
+    "4x6": (4.0, 6.0),
+    "5x7": (5.0, 7.0),
+    "6x8": (6.0, 8.0),
+    "8x10": (8.0, 10.0),
+}
 
 
 @dataclass(slots=True)
@@ -68,6 +77,10 @@ class WatermarkOptions:
     geocode: bool = True
     quality: int | None = None
     max_dimension: int | None = None
+    print_size: str | None = None
+    dpi: int = 300
+    fit: str = "crop"
+    safe_margin_mm: float = 5.0
 
     def __post_init__(self) -> None:
         if self.style not in STYLE_PRESETS:
@@ -78,6 +91,12 @@ class WatermarkOptions:
         self.scale = max(0.4, min(3.0, self.scale))
         if self.quality is not None:
             self.quality = max(1, min(100, self.quality))
+        if self.print_size is not None and self.print_size not in PRINT_PRESETS:
+            raise ValueError(f"Unknown print size: {self.print_size}")
+        if self.fit not in {"crop", "contain"}:
+            raise ValueError(f"Unknown print fit: {self.fit}")
+        self.dpi = max(72, min(1200, self.dpi))
+        self.safe_margin_mm = max(2.0, min(20.0, self.safe_margin_mm))
 
 
 @dataclass(slots=True)
@@ -268,6 +287,16 @@ class WatermarkProcessor:
         return ImageStat.Stat(image.crop(box).convert("L")).mean[0]
 
     @staticmethod
+    def _background_detail(
+        image: Image.Image,
+        box: tuple[int, int, int, int],
+    ) -> tuple[float, float]:
+        region = image.crop(box).convert("L")
+        variance = ImageStat.Stat(region).var[0]
+        edge_mean = ImageStat.Stat(region.filter(ImageFilter.FIND_EDGES)).mean[0]
+        return variance, edge_mean
+
+    @staticmethod
     def _position_box(
         position: str,
         canvas: tuple[int, int],
@@ -307,6 +336,51 @@ class WatermarkProcessor:
         }
         return [(field_name, values[field_name]) for field_name in options.fields if values.get(field_name)]  # type: ignore[list-item]
 
+    @staticmethod
+    def _print_target(image: Image.Image, options: WatermarkOptions) -> tuple[int, int]:
+        short_inches, long_inches = PRINT_PRESETS[options.print_size or "4x6"]
+        short_px = round(short_inches * options.dpi)
+        long_px = round(long_inches * options.dpi)
+        return (short_px, long_px) if image.height >= image.width else (long_px, short_px)
+
+    @staticmethod
+    def _to_srgb(image: Image.Image, icc_profile: bytes | None) -> tuple[Image.Image, bytes | None]:
+        """Normalize print output to sRGB when the source profile is available."""
+        try:
+            srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+            srgb_bytes = srgb.tobytes()
+            rgb = image.convert("RGB")
+            if icc_profile:
+                source_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+                rgb = ImageCms.profileToProfile(rgb, source_profile, srgb, outputMode="RGB")
+            return rgb, srgb_bytes
+        except (OSError, ValueError, ImageCms.PyCMSError):
+            return image.convert("RGB"), icc_profile
+
+    def _prepare_for_print(
+        self,
+        image: Image.Image,
+        options: WatermarkOptions,
+        icc_profile: bytes | None,
+    ) -> tuple[Image.Image, bytes | None]:
+        image, output_profile = self._to_srgb(image, icc_profile)
+        target = self._print_target(image, options)
+        if options.fit == "crop":
+            prepared = ImageOps.fit(
+                image,
+                target,
+                method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
+        else:
+            contained = ImageOps.contain(image, target, method=Image.Resampling.LANCZOS)
+            prepared = Image.new("RGB", target, "white")
+            prepared.paste(
+                contained,
+                ((target[0] - contained.width) // 2, (target[1] - contained.height) // 2),
+            )
+        return prepared.convert("RGBA"), output_profile
+
     def add_watermark(
         self,
         image: Image.Image,
@@ -320,8 +394,12 @@ class WatermarkProcessor:
 
         preset = STYLE_PRESETS[options.style]
         base = min(image.size)
-        time_size = int(base * config.FONT_SIZE_RATIO * options.scale)
-        detail_size = int(base * config.LOCATION_FONT_SIZE_RATIO * options.scale)
+        if options.print_size:
+            time_size = round(11.5 * options.dpi / 72 * options.scale)
+            detail_size = round(9 * options.dpi / 72 * options.scale)
+        else:
+            time_size = int(base * config.FONT_SIZE_RATIO * options.scale)
+            detail_size = int(base * config.LOCATION_FONT_SIZE_RATIO * options.scale)
         fonts = {
             field_name: self._load_font(
                 config.FONT_PATH if field_name == "time" else config.LOCATION_FONT_PATH,
@@ -333,7 +411,11 @@ class WatermarkProcessor:
         measure = ImageDraw.Draw(image)
         metrics: list[tuple[str, str, ImageFont.ImageFont, int, int]] = []
         max_width = 0
-        gap = max(2, int(detail_size * (config.LINE_SPACING - 0.6)))
+        gap = (
+            max(2, round(1.1 * options.dpi / 25.4))
+            if options.print_size
+            else max(2, int(detail_size * (config.LINE_SPACING - 0.6)))
+        )
         for field_name, text in lines:
             font = fonts[field_name]
             left, top, right, bottom = measure.textbbox((0, 0), text, font=font, anchor="lt")
@@ -341,8 +423,16 @@ class WatermarkProcessor:
             metrics.append((field_name, text, font, text_width, text_height))
             max_width = max(max_width, text_width)
 
-        padding = max(6, int(base * config.PADDING_RATIO * options.scale))
-        margin = max(8, int(base * config.MARGIN_RATIO))
+        padding = (
+            max(6, round(2.2 * options.dpi / 25.4))
+            if options.print_size
+            else max(6, int(base * config.PADDING_RATIO * options.scale))
+        )
+        margin = (
+            round(options.safe_margin_mm * options.dpi / 25.4)
+            if options.print_size
+            else max(8, int(base * config.MARGIN_RATIO))
+        )
         available_width = max(40, image.width - margin * 2 - padding * 2)
         if max_width > available_width:
             fit = available_width / max_width
@@ -373,12 +463,22 @@ class WatermarkProcessor:
         )
 
         brightness = self._brightness(image, box)
+        variance, edge_mean = self._background_detail(image, box)
+        clean_background = variance < 700 and edge_mean < 14
         foreground = (18, 18, 18, 255) if brightness > 145 else (248, 248, 248, 255)
         plate_rgb = (255, 255, 255) if brightness > 145 else (0, 0, 0)
         opacity = options.opacity
         plate_alpha = int(int(preset["plate_alpha"]) * opacity)
         blur_radius = int(config.BLUR_RADIUS * float(preset["blur_scale"]) * max(1, base / 2000))
         radius = int(padding * float(preset["radius"]))
+        if options.style == "retro":
+            # A clean corner already provides separation. Avoid the pasted-on panel
+            # and halo that make thin dot-matrix glyphs look soft in print.
+            if clean_background:
+                plate_alpha = 0
+            else:
+                plate_alpha = min(plate_alpha, 46)
+            blur_radius = 0
 
         result = image.convert("RGBA")
         if blur_radius > 0:
@@ -398,6 +498,8 @@ class WatermarkProcessor:
         draw = ImageDraw.Draw(result)
         current_y = box[1] + padding
         stroke = int(preset["stroke"])
+        if options.print_size and options.style != "retro":
+            stroke = max(stroke, round(0.2 * options.dpi / 25.4))
         stroke_fill = (255, 255, 255, 150) if foreground[0] < 128 else (0, 0, 0, 150)
         align_right = position.endswith("right")
         for _, text, font, text_width, text_height in metrics:
@@ -443,12 +545,39 @@ class WatermarkProcessor:
                 info = dict(original.info)
                 qtables = getattr(original, "quantization", None)
                 sampling = JpegImagePlugin.get_sampling(original) if source_format == "JPEG" else None
-                image = ImageOps.exif_transpose(original).convert("RGBA")
-            if options.max_dimension and max(image.size) > options.max_dimension:
+                image = ImageOps.exif_transpose(original).copy()
+            if options.print_size:
+                target = self._print_target(image, options)
+                resize_scale = (
+                    max(target[0] / image.width, target[1] / image.height)
+                    if options.fit == "crop"
+                    else min(target[0] / image.width, target[1] / image.height)
+                )
+                effective_dpi = options.dpi / resize_scale
+                if effective_dpi < 240:
+                    result.warnings.append(
+                        f"原图用于 {options.print_size} 冲印的有效分辨率约 {effective_dpi:.0f} DPI，低于建议的 240 DPI"
+                    )
+                image, print_profile = self._prepare_for_print(
+                    image,
+                    options,
+                    info.get("icc_profile"),
+                )
+                if print_profile:
+                    info["icc_profile"] = print_profile
+            else:
+                image = image.convert("RGBA")
+            if not options.print_size and options.max_dimension and max(image.size) > options.max_dimension:
                 image.thumbnail((options.max_dimension, options.max_dimension), Image.Resampling.LANCZOS)
             image = self.add_watermark(image, metadata, options)
+            if options.print_size and options.max_dimension and max(image.size) > options.max_dimension:
+                image.thumbnail((options.max_dimension, options.max_dimension), Image.Resampling.LANCZOS)
 
             exif_dict.setdefault("0th", {}).pop(piexif.ImageIFD.Orientation, None)
+            exif_dict.setdefault("0th", {})[piexif.ImageIFD.ImageWidth] = image.width
+            exif_dict.setdefault("0th", {})[piexif.ImageIFD.ImageLength] = image.height
+            exif_dict.setdefault("Exif", {})[piexif.ExifIFD.PixelXDimension] = image.width
+            exif_dict.setdefault("Exif", {})[piexif.ExifIFD.PixelYDimension] = image.height
             exif_bytes = piexif.dump(exif_dict)
             suffix = destination.suffix.lower() or source.suffix.lower()
             with tempfile.NamedTemporaryFile(
@@ -459,12 +588,17 @@ class WatermarkProcessor:
             save_kwargs: dict[str, object] = {}
             if info.get("icc_profile"):
                 save_kwargs["icc_profile"] = info["icc_profile"]
-            if info.get("dpi"):
+            if options.print_size:
+                save_kwargs["dpi"] = (options.dpi, options.dpi)
+            elif info.get("dpi"):
                 save_kwargs["dpi"] = info["dpi"]
             if suffix in {".jpg", ".jpeg"}:
                 image = image.convert("RGB")
                 save_kwargs["exif"] = exif_bytes
-                if options.quality is not None or not qtables:
+                if options.print_size:
+                    save_kwargs["quality"] = options.quality or 95
+                    save_kwargs["subsampling"] = 0
+                elif options.quality is not None or not qtables:
                     save_kwargs["quality"] = options.quality or config.DEFAULT_JPEG_QUALITY
                     save_kwargs["subsampling"] = config.DEFAULT_JPEG_SUBSAMPLING
                 else:

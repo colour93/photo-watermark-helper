@@ -54,10 +54,14 @@ class Config:
         self.INPUT_DIR = self.get_env_str("WATERMARK_INPUT_DIR", "input")
         self.OUTPUT_DIR = self.get_env_str("WATERMARK_OUTPUT_DIR", "output")
 
-        self.FONT_PATH = self.get_env_str("WATERMARK_TIME_FONT_PATH", "")
-        self.LOCATION_FONT_PATH = self.get_env_str("WATERMARK_LOCATION_FONT_PATH", "")
-        self.FONT_SIZE_RATIO = self.get_env_float("WATERMARK_TIME_FONT_SIZE_RATIO", 0.035)
-        self.LOCATION_FONT_SIZE_RATIO = self.get_env_float("WATERMARK_LOCATION_FONT_SIZE_RATIO", 0.022)
+        self.FONT_PATH = self.get_env_str(
+            "WATERMARK_TIME_FONT_PATH", "fonts/TickingTimebombBB.ttf"
+        )
+        self.LOCATION_FONT_PATH = self.get_env_str(
+            "WATERMARK_LOCATION_FONT_PATH", "fonts/unifont.otf"
+        )
+        self.FONT_SIZE_RATIO = self.get_env_float("WATERMARK_TIME_FONT_SIZE_RATIO", 0.038)
+        self.LOCATION_FONT_SIZE_RATIO = self.get_env_float("WATERMARK_LOCATION_FONT_SIZE_RATIO", 0.025)
         self.MARGIN_RATIO = self.get_env_float("WATERMARK_MARGIN_RATIO", 0.025)
         self.PADDING_RATIO = self.get_env_float("WATERMARK_PADDING_RATIO", 0.012)
         self.LINE_SPACING = self.get_env_float("WATERMARK_LINE_SPACING", 1.25)

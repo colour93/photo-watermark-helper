@@ -20,6 +20,7 @@ from rich.table import Table
 from .. import __version__
 from ..core.processor import (
     POSITIONS,
+    PRINT_PRESETS,
     STYLE_PRESETS,
     ProcessResult,
     WatermarkOptions,
@@ -57,6 +58,10 @@ def _options(
     custom_location: str | None,
     no_geocode: bool,
     quality: int | None,
+    print_size: str | None,
+    dpi: int,
+    fit: str,
+    safe_margin_mm: float,
     max_dimension: int | None = None,
 ) -> WatermarkOptions:
     return WatermarkOptions(
@@ -71,6 +76,10 @@ def _options(
         geocode=not no_geocode,
         quality=quality,
         max_dimension=max_dimension,
+        print_size=print_size,
+        dpi=dpi,
+        fit=fit,
+        safe_margin_mm=safe_margin_mm,
     )
 
 
@@ -86,6 +95,10 @@ def render_options(function):
         click.option("--location", "custom_location", help="Override the displayed location"),
         click.option("--no-geocode", is_flag=True, help="Use GPS coordinates without a network request"),
         click.option("--quality", type=click.IntRange(1, 100), help="JPEG/WebP output quality"),
+        click.option("--print-size", type=click.Choice(tuple(PRINT_PRESETS)), help="Prepare an exact photo-print size"),
+        click.option("--dpi", type=click.IntRange(72, 1200), default=300, show_default=True),
+        click.option("--fit", type=click.Choice(("crop", "contain")), default="crop", show_default=True, help="Crop to fill, or keep the whole image with borders"),
+        click.option("--safe-margin-mm", type=click.FloatRange(2, 20), default=5.0, show_default=True),
     ]
     for option in reversed(options):
         function = option(function)
@@ -116,6 +129,12 @@ def _print_results(console: Console, results: list[ProcessResult], skipped: list
         table = Table("文件", "原因", box=None)
         for result in failures:
             table.add_row(str(result.input_path), result.error or "unknown error")
+        console.print(table)
+    warnings = [(result.input_path, warning) for result in results for warning in result.warnings]
+    if warnings:
+        table = Table("文件", "印刷提示", box=None)
+        for path, warning in warnings:
+            table.add_row(str(path), warning)
         console.print(table)
 
 
@@ -326,15 +345,22 @@ def doctor(ctx: click.Context) -> None:
     checks.append(("输入目录", Path(config.INPUT_DIR).is_dir(), config.INPUT_DIR))
     checks.append(("输出目录", Path(config.OUTPUT_DIR).parent.exists(), config.OUTPUT_DIR))
     checks.append(("高德 API", bool(config.AMAP_API_KEY), "已配置" if config.AMAP_API_KEY else "未配置，将显示坐标"))
-    font_ok = False
-    for candidate in WatermarkProcessor._font_candidates(config.FONT_PATH):
-        try:
-            ImageFont.truetype(candidate, 16)
-            font_ok = True
-            break
-        except OSError:
-            continue
-    checks.append(("字体", font_ok, config.FONT_PATH or "自动选择系统字体"))
+    for label, configured in (
+        ("时间字体", config.FONT_PATH),
+        ("地点字体", config.LOCATION_FONT_PATH),
+    ):
+        configured_ok = bool(configured and Path(configured).is_file())
+        fallback_ok = configured_ok
+        if not fallback_ok:
+            for candidate in WatermarkProcessor._font_candidates(configured):
+                try:
+                    ImageFont.truetype(candidate, 16)
+                    fallback_ok = True
+                    break
+                except OSError:
+                    continue
+        detail = configured if configured_ok else f"{configured or '未配置'}（将回退系统字体）"
+        checks.append((label, configured_ok, detail if fallback_ok else "没有可用字体"))
     server_ok = all(importlib.util.find_spec(name) for name in ("fastapi", "uvicorn", "aiofiles"))
     checks.append(("服务端 extra", server_ok, "uv sync --extra server" if not server_ok else "已安装"))
     if (ctx.find_root().obj or {}).get("json"):
@@ -391,7 +417,31 @@ def wizard(ctx: click.Context) -> None:
     if not input_dir.is_dir():
         raise click.ClickException(f"目录不存在：{input_dir}")
     output_dir = Path(Prompt.ask("输出目录", default=config.OUTPUT_DIR)).expanduser()
-    style = Prompt.ask("样式", choices=list(STYLE_PRESETS), default=config.DEFAULT_STYLE)
+    print_mode = Confirm.ask("是否开启照片冲印模式？", default=False)
+    print_size = None
+    dpi = 300
+    fit = "crop"
+    safe_margin_mm = 5.0
+    if print_mode:
+        print_size = Prompt.ask(
+            "冲印尺寸（英寸）",
+            choices=list(PRINT_PRESETS),
+            default="4x6",
+        )
+        fit = Prompt.ask(
+            "画面适配（crop=裁切铺满，contain=完整保留并留边）",
+            choices=["crop", "contain"],
+            default="crop",
+        )
+        console.print(
+            "将按 [bold]300 DPI[/bold] 输出，保留 [bold]5 mm[/bold] 安全边距；"
+            "水印会在最终裁切后定位。"
+        )
+    style = Prompt.ask(
+        "水印样式",
+        choices=list(STYLE_PRESETS),
+        default="retro" if print_mode else config.DEFAULT_STYLE,
+    )
     discovered = _collect(input_dir, recursive=False)
     console.print(f"找到 [bold]{len(discovered)}[/bold] 张图片，默认不会覆盖已存在文件。")
     if not discovered or not Confirm.ask("开始处理？", default=True):
@@ -415,6 +465,10 @@ def wizard(ctx: click.Context) -> None:
         custom_location=None,
         no_geocode=False,
         quality=None,
+        print_size=print_size,
+        dpi=dpi,
+        fit=fit,
+        safe_margin_mm=safe_margin_mm,
     )
 
 
