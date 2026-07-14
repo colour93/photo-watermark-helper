@@ -1,7 +1,7 @@
-"""Entry point for the application."""
+"""Backward-compatible development entry point."""
 
-from watermarker.main import init_app, cli
+from watermarker.main import main
+
 
 if __name__ == "__main__":
-    init_app()
-    cli()
+    main()

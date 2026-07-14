@@ -51,7 +51,7 @@ class WatermarkServer:
         self.app = FastAPI(
             title="Photo Watermark API",
             description="API for adding watermarks to photos",
-            version="0.1.0",
+            version="0.2.0",
         )
         
         # Setup CORS

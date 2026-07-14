@@ -4,13 +4,14 @@ import os
 import base64
 import io
 import asyncio
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 from pathlib import Path
 from functools import partial
 
-import aiofiles
-from fastapi import UploadFile
 from PIL import Image
+
+if TYPE_CHECKING:
+    from fastapi import UploadFile
 
 
 def ensure_directory(directory: Union[str, Path]) -> None:
@@ -124,7 +125,6 @@ def base64_to_image(b64_string: str, output_path: Optional[str] = None) -> Optio
             print(f"Saving image as {format} to {output_path}")
             with open(output_path, 'wb') as out_file:
                 img.save(out_file, format=format)
-            img.show()  # Show the image if needed
             img.close()
             return None
         
@@ -216,7 +216,7 @@ async def async_base64_to_image(b64_string: str, output_path: str) -> bool:
         return False
 
 
-async def async_save_uploaded_file(upload_file: Union[bytes, UploadFile], destination_path: str) -> bool:
+async def async_save_uploaded_file(upload_file: Union[bytes, "UploadFile"], destination_path: str) -> bool:
     """
     Asynchronously save an uploaded file to disk.
     
@@ -228,6 +228,9 @@ async def async_save_uploaded_file(upload_file: Union[bytes, UploadFile], destin
         True if successful, False otherwise
     """
     try:
+        import aiofiles
+        from fastapi import UploadFile
+
         # Ensure the directory exists
         os.makedirs(os.path.dirname(os.path.abspath(destination_path)), exist_ok=True)
         

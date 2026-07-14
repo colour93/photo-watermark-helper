@@ -1,476 +1,146 @@
 # Photo Watermark Helper
 
-一个功能强大的照片水印工具，支持命令行和服务器模式，可添加时间戳和地理位置水印。
-
-## 功能特点
-
-- 多种运行模式：
-  - 命令行批处理模式
-  - 交互式TUI界面模式
-  - Web服务器API模式（支持REST和WebSocket）
-- 多种输入格式支持：
-  - 本地文件处理
-  - Base64编码图片处理
-  - WebSocket流式处理
-- 智能图片水印：
-  - 读取照片EXIF信息中的拍摄时间
-  - 读取GPS信息并通过高德地图API转换为地理位置
-  - 智能文字颜色（根据背景自动选择黑/白）
-  - 美观的模糊背景效果
-- 高质量处理：
-  - 保留原始EXIF信息
-  - 保持原图质量和压缩参数
-  - 异步高性能处理，支持批量操作
-- 完全可配置：
-  - 支持环境变量或.env文件配置
-  - 可自定义字体、大小、位置和效果
+面向照片批处理的安全水印 CLI：从 EXIF 提取拍摄时间、GPS、相机和镜头信息，支持预览、样式预设、智能位置及 REST/WebSocket 服务。
 
 ## 安装
 
-### 使用PDM安装（推荐）
+项目使用 [uv](https://docs.astral.sh/uv/) 管理 Python 与依赖：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/colour93/photo-watermark-helper.git
-cd photo-watermark-helper
-
-# 使用PDM安装依赖
-pdm install
+uv sync
+uv run watermarker --help
 ```
 
-### 使用 Pip 安装
+如需服务端：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/colour93/photo-watermark-helper.git
-cd photo-watermark-helper
-
-# 安装依赖
-pip install -r requirements.txt
+uv sync --extra server
 ```
 
-### 使用 pdm 安装
+也可以安装为命令：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/colour93/photo-watermark-helper.git
-cd photo-watermark-helper
-
-# 安装依赖
-pdm install
+uv tool install .
+watermarker --help
 ```
 
-## 配置
-
-支持通过环境变量或 `.env` 文件配置所有参数。
-
-1. 复制 `.env.example` 为 `.env` 或 `.env.local`：
+## 推荐旅程
 
 ```bash
-cp .env.example .env
+# 1. 检查可提取的水印信息
+uv run watermarker inspect photo.jpg
+
+# 2. 快速生成低分辨率预览
+uv run watermarker preview photo.jpg --style glass --open
+
+# 3. 处理单张或多张图片
+uv run watermarker add photo.jpg another.jpg -o output/
+
+# 4. 安全批处理；默认跳过已存在文件
+uv run watermarker batch photos/ -o output/ --recursive
 ```
 
-2. 编辑 `.env` 文件，根据需要修改配置：
+直接运行 `uv run watermarker` 会进入首次使用向导。
 
-```env
-# 基本路径配置
-WATERMARK_INPUT_DIR=input
-WATERMARK_OUTPUT_DIR=output
+## 常用功能
 
-# 字体配置
-WATERMARK_TIME_FONT_PATH=sarasa-mono-sc-semibold.ttf
-WATERMARK_LOCATION_FONT_PATH=sarasa-mono-sc-semibold.ttf
+### 样式与内容
 
-# 字体大小配置（占图片最短边的比例）
-WATERMARK_TIME_FONT_SIZE_RATIO=0.04
-WATERMARK_LOCATION_FONT_SIZE_RATIO=0.03
+内置四种样式：
 
-# 布局配置
-WATERMARK_MARGIN_RATIO=0.02
-WATERMARK_PADDING_RATIO=0.01
-WATERMARK_LINE_SPACING=1.5
-
-# 效果配置
-WATERMARK_BLUR_RADIUS=10
-
-# 图片格式配置
-WATERMARK_IMAGE_EXTS=.jpg,.jpeg,.png
-WATERMARK_DEFAULT_JPEG_QUALITY=95
-WATERMARK_DEFAULT_JPEG_SUBSAMPLING=0
-
-# API配置
-WATERMARK_AMAP_API_KEY=你的高德地图API密钥
-
-# 服务器配置
-WATERMARK_SERVER_HOST=127.0.0.1
-WATERMARK_SERVER_PORT=9393
-API_TOKEN=your_secret_api_token_here
-DEBUG=false
-
-# 日志配置
-WATERMARK_LOG_LEVEL=INFO
-WATERMARK_LOG_FILE=logs/watermarker.log
-```
-
-## 使用方法
-
-### 命令行批处理模式
+- `minimal`：低干扰的现代信息水印，默认样式。
+- `glass`：模糊与半透明底板，适合复杂背景。
+- `film`：较强的信息条视觉。
+- `stamp`：描边时间戳风格。
 
 ```bash
-# 使用默认配置处理图片
-python -m watermarker batch
-
-# 指定输入输出目录
-python -m watermarker batch --input ./my_photos --output ./watermarked_photos
-
-# 不使用TUI界面（适用于脚本中调用）
-python -m watermarker batch --no-tui
+uv run watermarker preview photo.jpg \
+  --style minimal \
+  --position auto \
+  --fields time,location,camera,lens \
+  --date-format "%Y.%m.%d %H:%M" \
+  --opacity 0.85 \
+  --scale 1.1
 ```
 
-### 交互式TUI界面模式
+位置支持 `auto`、`top-left`、`top-right`、`bottom-left`、`bottom-right`。`auto` 会比较四角的纹理和边缘密度，选择干扰较少的位置。
+
+### 时间与地点
+
+时间按以下顺序降级：
+
+```text
+DateTimeOriginal → DateTimeDigitized → DateTime → 文件修改时间
+```
+
+地点优先使用高德逆地理编码；未配置 API、请求失败或使用 `--no-geocode` 时显示 GPS 坐标。也可以手动覆盖：
 
 ```bash
-python -m watermarker interactive
+uv run watermarker add photo.jpg --time "2026-07-14 18:30" --location "上海"
 ```
 
-### 服务器模式
+### 批处理安全性
 
 ```bash
-# 使用默认配置启动服务器
-python -m watermarker server
+# 仅查看将要执行的操作
+uv run watermarker batch photos/ -o output/ --dry-run
 
-# 指定主机和端口
-python -m watermarker server --host 127.0.0.1 --port 5000
+# 冲突策略：skip（默认）、rename、overwrite
+uv run watermarker batch photos/ -o output/ --on-exists rename
+
+# 控制并发数
+uv run watermarker batch photos/ -o output/ --workers 8
 ```
 
-## API接口说明
+默认文件名会增加 `_watermarked`，输出通过临时文件原子写入。输入输出不能是同一文件。全部成功时退出码为 `0`，出现处理失败时为 `1`，命令或配置错误时为 `2`。
 
-当以服务器模式运行时，可以通过以下API接口处理图片：
-
-### REST API
-
-- `GET /` - 服务器状态检查
-- `POST /watermark/file` - 处理上传的图片文件
-
-#### API使用示例
-
-##### 文件上传处理
-```bash
-curl -X POST "http://localhost:9393/watermark/file" \
-  -H "X-API-Key: your_secret_api_token_here" \
-  -F "file=@examples/input/C93_0011.jpg" \
-  --output watermarked_output.jpg
-```
-
-### WebSocket API
-
-- `WebSocket /watermark/stream` - 实时流式文件处理
-
-#### WebSocket接口详解
-
-
-### 大文件分块上传说明
-
-由于 WebSocket 消息有大小限制（通常为 1MB），客户端会自动将大文件分块上传。无需手动操作，客户端会自动处理分块和重组，服务器也已支持分块接收。
-
-**注意事项：**
-- 单张图片超过 1MB 时会自动分块上传。
-- 分块上传无需用户干预，进度会在客户端界面显示。
-- 如果遇到 `message too big` 错误，请确保使用新版客户端和服务器。
-
-##### 连接建立
-
-1. 客户端建立WebSocket连接
-   ```javascript
-   const socket = new WebSocket('ws://localhost:9393/watermark/stream');
-   ```
-
-2. 连接成功后，首先发送文件信息（JSON格式）：
-   ```json
-   {
-     "token": "your_secret_api_token_here",  // 如果配置了API_TOKEN则必需
-     "filename": "image.jpg",                // 文件名
-     "size": 1024000,                       // 文件大小（字节）
-     "chunks": 3,                           // 分块数量（可选，大文件时使用）
-     "chunk_size": 1048576                  // 分块大小（可选，默认1MB）
-   }
-   ```
-
-3. 然后发送文件的二进制数据（支持分块发送）：
-   ```javascript
-   // 小文件（< 1MB）直接发送
-   if (file.size <= 1048576) {
-     socket.send(fileData);
-   } else {
-     // 大文件分块发送
-     const chunkSize = 1048576 - 1024; // 1MB - 1KB buffer
-     const totalChunks = Math.ceil(file.size / chunkSize);
-     
-     for (let i = 0; i < totalChunks; i++) {
-       const start = i * chunkSize;
-       const end = Math.min(start + chunkSize, file.size);
-       const chunk = fileData.slice(start, end);
-       
-       socket.send(chunk);
-       
-       // 等待服务器确认（除最后一块外）
-       if (i < totalChunks - 1) {
-         await waitForChunkAck();
-       }
-     }
-   }
-   ```
-
-4. 服务器处理文件并返回JSON响应：
-   ```json
-   {
-     "success": true,
-     "message": "Image successfully watermarked",
-     "timestamp": "2025-07-23T10:15:30.123456",
-     "output_size": 1234567,
-     "output_filename": "watermarked_image.jpg"
-   }
-   ```
-
-5. 如果处理成功，服务器随后发送处理后的文件二进制数据
-
-6. 如果处理失败，服务器返回错误响应：
-   ```json
-   {
-     "success": false,
-     "message": "Error processing file: Invalid image format"
-   }
-   ```
-
-##### Python WebSocket示例
-
-项目中包含了一个完整的Python WebSocket客户端示例（`examples/websocket_file_client.py`）：
+### 自动化输出
 
 ```bash
-# 使用WebSocket文件流客户端
-python examples/websocket_file_client.py
-
-# 或处理特定文件
-python examples/websocket_file_client.py /path/to/image.jpg
+uv run watermarker --json inspect photo.jpg
+uv run watermarker --json batch photos/ -o output/
+uv run watermarker --quiet batch photos/ -o output/
+uv run watermarker --no-color batch photos/ -o output/
 ```
 
-##### JavaScript WebSocket分块上传示例
+### 配置检查
 
-```javascript
-async function uploadImageViaWebSocket(file, apiToken) {
-  const socket = new WebSocket('ws://localhost:9393/watermark/stream');
-  const CHUNK_SIZE = 1024 * 1024 - 1024; // 1MB - 1KB buffer
-  
-  return new Promise((resolve, reject) => {
-    socket.onopen = async () => {
-      try {
-        // 1. 发送文件信息
-        const totalChunks = file.size > CHUNK_SIZE ? 
-          Math.ceil(file.size / CHUNK_SIZE) : 1;
-        
-        const fileInfo = {
-          token: apiToken,
-          filename: file.name,
-          size: file.size,
-          chunks: totalChunks,
-          chunk_size: CHUNK_SIZE
-        };
-        
-        socket.send(JSON.stringify(fileInfo));
-        
-        // 2. 读取文件数据
-        const fileData = await file.arrayBuffer();
-        
-        // 3. 发送文件数据（分块或整体）
-        if (file.size <= CHUNK_SIZE) {
-          // 小文件，直接发送
-          socket.send(fileData);
-        } else {
-          // 大文件，分块发送
-          let chunkIndex = 0;
-          
-          const sendNextChunk = () => {
-            if (chunkIndex < totalChunks) {
-              const start = chunkIndex * CHUNK_SIZE;
-              const end = Math.min(start + CHUNK_SIZE, file.size);
-              const chunk = fileData.slice(start, end);
-              
-              socket.send(chunk);
-              chunkIndex++;
-            }
-          };
-          
-          // 开始发送第一块
-          sendNextChunk();
-          
-          // 监听服务器的块确认消息
-          socket.addEventListener('message', (event) => {
-            try {
-              const response = JSON.parse(event.data);
-              
-              // 如果是块确认消息，继续发送下一块
-              if (response.chunk_received && chunkIndex < totalChunks) {
-                sendNextChunk();
-              }
-            } catch (e) {
-              // 忽略非JSON消息（可能是最终的文件数据）
-            }
-          });
-        }
-      } catch (error) {
-        reject(error);
-      }
-    };
-    
-    let awaitingResult = false;
-    socket.onmessage = (event) => {
-      try {
-        // 尝试解析JSON响应
-        const response = JSON.parse(event.data);
-        
-        // 如果是块确认消息，已在上面处理
-        if (response.chunk_received) {
-          return;
-        }
-        
-        // 如果是处理结果
-        if (response.success !== undefined) {
-          if (response.success) {
-            awaitingResult = true;
-            console.log('图片处理成功，等待文件数据...');
-          } else {
-            reject(new Error(response.message || '处理失败'));
-          }
-        }
-      } catch (e) {
-        // 如果不是JSON，可能是文件二进制数据
-        if (awaitingResult && event.data instanceof ArrayBuffer) {
-          const blob = new Blob([event.data]);
-          resolve(blob);
-        }
-      }
-    };
-    
-    socket.onerror = (error) => reject(error);
-    socket.onclose = () => {
-      if (!awaitingResult) {
-        reject(new Error('连接意外关闭'));
-      }
-    };
-  });
-}
-
-// 使用示例
-const fileInput = document.getElementById('file-input');
-fileInput.addEventListener('change', async (event) => {
-  const file = event.target.files[0];
-  if (file) {
-    try {
-      const processedBlob = await uploadImageViaWebSocket(file, 'your_api_token');
-      
-      // 下载处理后的文件
-      const url = URL.createObjectURL(processedBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `watermarked_${file.name}`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('上传失败:', error);
-    }
-  }
-});
+```bash
+uv run watermarker doctor
+uv run watermarker config show
+uv run watermarker config init
 ```
 
-##### WebSocket优势
+配置优先读取 `WATERMARK_CONFIG` 指定的文件，否则依次读取当前目录的 `.env.local`、`.env`。完整变量见 [.env.example](.env.example)。CLI 参数优先于环境默认值。
 
-1. **高效传输**: 直接传输文件二进制数据，无需Base64编码/解码
-2. **低延迟**: 避免HTTP连接建立的开销，特别适合批量处理
-3. **持久连接**: 无需反复建立连接，提高性能
-4. **实时反馈**: 即时获取处理结果，适合交互式应用
-5. **双向通信**: 客户端和服务器可以随时交换信息
-6. **状态保持**: 连接期间可以维护会话状态
-7. **分块上传**: 自动处理大文件分块，突破消息大小限制
-8. **容错性**: 分块确认机制确保数据完整性
+## 图像与元数据
 
-注意：WebSocket现在处理原始文件数据，支持更大的文件和更好的性能。分块上传功能让您可以处理任意大小的图片文件。
+- 支持 JPEG、PNG、WebP，可通过配置扩展后缀。
+- 自动应用 EXIF orientation，避免手机竖图方向错误。
+- 保留 EXIF、ICC profile 和 DPI；应用方向后会移除 orientation 标签。
+- JPEG 默认复用原始量化表和采样方式；指定 `--quality` 时使用明确的重新编码质量。
+- 长文本会自动缩小以适配画面安全区。
 
-## 开发说明
+## 服务端
 
- 项目结构：
-
-```
-watermarker/
-├── __init__.py       # 包初始化
-├── main.py           # 主入口
-├── core/             # 核心功能模块
-│   ├── __init__.py
-│   └── processor.py  # 水印处理器
-├── cli/              # 命令行界面
-│   ├── __init__.py
-│   └── commands.py   # 命令定义
-├── server/           # 服务器模块
-│   ├── __init__.py
-│   └── app.py        # FastAPI应用
-└── utils/            # 工具函数
-    ├── __init__.py
-    ├── config.py     # 配置管理
-    ├── file_utils.py # 文件工具
-    └── logger.py     # 日志工具
+```bash
+uv sync --extra server
+uv run watermarker server --host 127.0.0.1 --port 9393
 ```
 
-## 配置参数详解
+- `POST /watermark/file`：上传并返回处理后的图片。
+- `WebSocket /watermark/stream`：支持分块上传。
+- 设置 `WATERMARK_API_TOKEN` 后，通过 `X-API-Key` 或 WebSocket 文件信息中的 `token` 鉴权。
 
-### 目录配置
-- `WATERMARK_INPUT_DIR`: 输入文件夹路径（默认: input）
-- `WATERMARK_OUTPUT_DIR`: 输出文件夹路径（默认: output）
+客户端示例见 [examples/websocket_file_client.py](examples/websocket_file_client.py)。
 
-### 字体配置
-- `WATERMARK_TIME_FONT_PATH`: 时间戳字体路径
-- `WATERMARK_LOCATION_FONT_PATH`: 地理位置字体路径
-- `WATERMARK_TIME_FONT_SIZE_RATIO`: 时间戳字体大小比例（相对于图片最短边）
-- `WATERMARK_LOCATION_FONT_SIZE_RATIO`: 地理位置字体大小比例
+## 示例图片与仓库体积
 
-### 布局配置
-- `WATERMARK_MARGIN_RATIO`: 外边距比例
-- `WATERMARK_PADDING_RATIO`: 内边距比例
-- `WATERMARK_LINE_SPACING`: 行间距倍数
-- `WATERMARK_BLUR_RADIUS`: 背景模糊半径
+`examples/**/*.{jpg,jpeg,png,webp}` 由 Git LFS 管理，并且被明确排除在 wheel 和 sdist 之外。克隆后需要示例原图时运行：
 
-### 图片处理
-- `WATERMARK_IMAGE_EXTS`: 支持的图片格式（逗号分隔）
-- `WATERMARK_DEFAULT_JPEG_QUALITY`: 默认 JPEG 质量（1-100）
-- `WATERMARK_DEFAULT_JPEG_SUBSAMPLING`: JPEG 色度采样（0=4:4:4, 2=4:2:0）
+```bash
+git lfs install
+git lfs pull
+```
 
-### API 配置
-- `WATERMARK_AMAP_API_KEY`: 高德地图 API 密钥（用于地理位置转换）
-
-### 服务器配置
-- `WATERMARK_SERVER_HOST`: 服务器监听地址（默认: 127.0.0.1）
-- `WATERMARK_SERVER_PORT`: 服务器端口（默认: 9393）
-- `API_TOKEN`: API访问令牌（用于保护API访问安全，不设置则无需认证）
-- `DEBUG`: 是否启用调试模式（默认: false）
-
-### 日志配置
-- `WATERMARK_LOG_LEVEL`: 日志级别（默认: INFO）
-- `WATERMARK_LOG_FILE`: 日志文件路径（默认: logs/watermarker.log）
-
-## 注意事项
-
-1. 确保字体文件存在且有正确的权限
-2. 高德地图 API 密钥需要自行申请 [高德地图开放平台控制台](https://console.amap.com/dev/key/app)
-3. PNG 格式不支持保存 EXIF 信息
-4. 建议使用 Python 3.12
-
-## 示例效果
-
-| 原图 | 水印后 |
-|:---:|:---:|
-| ![原图1](docs/input/C93_0011.jpg) | ![水印1](docs/output/C93_0011.jpg) |
-| ![原图2](docs/input/C93_1088.jpg) | ![水印2](docs/output/C93_1088.jpg) |
-| ![原图3](docs/input/C93_2155.jpg) | ![水印3](docs/output/C93_2155.jpg) |
-
-## 许可证
-
-MIT License
-
+普通 CLI 安装不会包含示例图片，也不会安装服务端依赖。

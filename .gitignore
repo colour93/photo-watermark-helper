@@ -2,9 +2,6 @@
 .env
 .env.local
 
-# PDM
-.pdm-python
-
 # sarasa-mono-sc-semibold
 sarasa-mono-sc-semibold.ttf
 
@@ -62,19 +59,11 @@ cover/
 profile_default/
 ipython_config.py
 
-# pyenv
-.python-version
-
 # pipenv
 Pipfile.lock
 
 # poetry
 poetry.lock
-
-# pdm
-.pdm.toml
-.pdm-python
-.pdm-build/
 
 # PEP 582
 __pypackages__/
@@ -89,7 +78,7 @@ celerybeat.pid
 # Environments
 .env
 .env.local
-.venv
+.venv/
 env/
 venv/
 ENV/

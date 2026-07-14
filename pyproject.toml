@@ -1,31 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "photo-watermark-helper"
-version = "0.1.0"
-description = "Advanced photo watermarking tool with server and CLI support"
+version = "0.2.0"
+description = "A safe, previewable CLI for adding time and location watermarks to photos"
 authors = [
     {name = "colour93", email = "x@fur93.icu"},
 ]
 dependencies = [
-    "pillow>=11.3.0", 
-    "piexif>=1.1.3", 
-    "requests>=2.32.4", 
-    "python-dotenv>=1.1.1", 
-    "numpy>=2.3.1",
-    "loguru>=0.7.2",
     "click>=8.1.7",
-    "fastapi>=0.115.6",
-    "uvicorn>=0.32.1",
+    "piexif>=1.1.3",
+    "pillow>=11.3.0",
+    "python-dotenv>=1.1.1",
+    "requests>=2.32.4",
     "rich>=13.9.4",
-    "websockets>=14.1",
-    "python-multipart>=0.0.19",
-    "aiofiles>=24.1.0"
 ]
-requires-python = "==3.12.*"
+requires-python = ">=3.12,<3.13"
 readme = "README.md"
 license = {text = "MIT"}
 
-[project.scripts]
-watermarker = "watermarker.main:cli"
+[project.optional-dependencies]
+server = [
+    "aiofiles>=24.1.0",
+    "fastapi>=0.115.6",
+    "loguru>=0.7.2",
+    "python-multipart>=0.0.19",
+    "uvicorn>=0.32.1",
+    "websockets>=14.1",
+]
 
-[tool.pdm]
-distribution = false
+[project.scripts]
+watermarker = "watermarker.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["watermarker"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/watermarker",
+    "/README.md",
+    "/pyproject.toml",
+]
+
+[tool.uv]
+package = true
